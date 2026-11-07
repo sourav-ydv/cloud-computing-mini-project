@@ -1,0 +1,10 @@
+models/
+datasets/
+__pycache__/
+*.pyc
+.env
+predictions.jsonl
+
+venv312/
+venv/
+shards/

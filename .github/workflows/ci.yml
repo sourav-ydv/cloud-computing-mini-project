@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - run: ruff check service worker training tools tests
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gitleaks/gitleaks-action@v2
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pytest
+      - run: python -m pytest tests -q
+
+  evaluate:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install transformers torch --index-url https://download.pytorch.org/whl/cpu
+      - run: |
+          mkdir -p model
+          gh release download ${{ vars.MODEL_RELEASE_TAG }} --repo ${{ github.repository }} --dir model
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: python tools/run_eval.py model data/validation.jsonl predictions.jsonl
+      - run: python tools/score.py predictions.jsonl data/validation.jsonl --out report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: predictions
+          path: predictions.jsonl
+
+  gate:
+    needs: evaluate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: predictions
+      - run: python tools/score.py predictions.jsonl data/validation.jsonl --min-validity 95
