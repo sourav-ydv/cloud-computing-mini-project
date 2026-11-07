@@ -3,15 +3,19 @@ import csv
 import json
 import os
 import random
-
 import time
 
 import numpy as np
 import torch
 import yaml
+
 torch.set_num_threads(2)
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    get_linear_schedule_with_warmup,
+)
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--data", default="datasets/v1/train.jsonl")

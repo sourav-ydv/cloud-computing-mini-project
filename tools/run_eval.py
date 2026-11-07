@@ -20,6 +20,7 @@ with open(VAL_PATH, encoding="utf-8") as f, open(OUT_PATH, "w", encoding="utf-8"
         rec = json.loads(line)
         prompt = f"Command: {rec['text']}\nJSON: "
         inputs = tokenizer(prompt, return_tensors="pt")
+        input_len = inputs["input_ids"].shape[1]
         with torch.no_grad():
             generated = model.generate(
                 **inputs,
@@ -27,6 +28,10 @@ with open(VAL_PATH, encoding="utf-8") as f, open(OUT_PATH, "w", encoding="utf-8"
                 do_sample=False,
                 pad_token_id=tokenizer.eos_token_id,
             )
-        full = tokenizer.decode(generated[0], skip_special_tokens=True)
-        prediction = full[len(prompt):].strip()
+        new_tokens = generated[0][input_len:]
+        prediction = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+        while prediction.lower().startswith("json:"):
+            prediction = prediction.split(":", 1)[1].strip()
+        if "{" in prediction:
+            prediction = prediction[prediction.index("{"):]
         out.write(json.dumps({"id": rec["id"], "prediction": prediction}) + "\n")
