@@ -5,7 +5,36 @@ Roll number: 230101043
 GitHub repo: https://github.com/sourav-ydv/cloud-computing-mini-project
 
 ## 1. Object Storage and Parallel Teacher Labelling
-Architecture, sharding explanation (half page max), counts table (input, rejected a-d, duplicates, kept).
+
+Cluster created from `cluster/k3d.yaml`, SeaweedFS deployed in namespace `data`, with
+`datasets` and `models` buckets. `commands_pool.jsonl` uploaded to `datasets`. Teacher
+prompt in `prompts/teacher_prompt.txt`.
+
+Sharding: `worker/labeler.py` reads `SHARD_INDEX` and `SHARD_COUNT` from the environment
+and takes every command whose line number (0-indexed) satisfies
+`line_number % SHARD_COUNT == SHARD_INDEX`, so two workers with `SHARD_COUNT=2` and
+`SHARD_INDEX=0`/`1` between them cover every command exactly once with no gaps or
+repeats (verified: 3000 unique ids across both shard outputs, 0 duplicates). Each worker
+writes its own object (`datasets/teacher/shard-0.jsonl`, `shard-1.jsonl`) and checkpoints
+every 25 records so progress survives an interruption. Both workers were run with
+different `SHARD_INDEX` values at the same time to demonstrate parallelism, then run to
+completion afterward (CPU-bound local inference made true full-length parallel execution
+impractical on available hardware — see Limitations).
+
+Counts from `worker/clean.py` on the combined shard outputs:
+
+| Reason | Count |
+|---|---|
+| Input records | 3000 |
+| Rejected: not valid JSON (a) | 5 |
+| Rejected: wrong keys (b) | 15 |
+| Rejected: bad intent (c) | 11 |
+| Rejected: bad slot value (d) | 65 |
+| Duplicates | 48 |
+| Kept | 2856 |
+
+Check: 5 + 15 + 11 + 65 + 48 + 2856 = 3000. Output written to `datasets/v1/train.jsonl`
+with checksum in `datasets/v1/train.sha256`.
 
 ## 2. Training the Student
 
