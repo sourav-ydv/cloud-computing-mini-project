@@ -8,3 +8,5 @@ predictions.jsonl
 venv312/
 venv/
 shards/
+!models/v1/model.sha256
+!models/v2/model.sha256

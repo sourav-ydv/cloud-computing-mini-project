@@ -40,7 +40,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install transformers torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install transformers
       - run: |
           mkdir -p model
           gh release download ${{ vars.MODEL_RELEASE_TAG }} --repo ${{ github.repository }} --dir model
