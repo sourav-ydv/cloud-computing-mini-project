@@ -38,7 +38,19 @@ The untrained model produced no valid JSON at all on the validation set — it h
 A specific limitation observed during generation: in a noticeable fraction of early-epoch outputs (and occasionally even in the final model), the student echoed its own prompt label — producing `"JSON: {...}"` or repeating `"JSON:"` a second time before the actual object — rather than going straight to the JSON object the teacher always produced. This is a training-data formatting artifact: with only 1,500 examples and 3 epochs on a 70M-parameter model, the student partially learned the surface pattern of the prompt template itself rather than cleanly separating "prompt" from "completion." The teacher never exhibits this behaviour. In practice this was handled by stripping a leading repeated `"JSON:"` label during post-processing before JSON parsing, which is why the reported `json_validity` (99%) is high despite this artifact — but it is a real limitation of the fine-tuned model's output discipline, not something hidden by the scoring method.
 
 ## 3. The Inference Service in a Container
-Endpoint behaviour, FAULT_INJECT test evidence, image size, peak memory under 1 CPU / 1 GiB for 50 requests.
+
+All three endpoints behave as specified: /healthz returns 200 once the process is alive;
+/readyz returns 503 until the model finishes downloading from object storage, then 200;
+/parse returns the four-key JSON with X-Model-Version and X-Served-By headers set correctly.
+
+FAULT_INJECT=1 test: /parse returned HTTP 500 with body exactly {"error": "invalid_model_output"},
+as required.
+
+Image size: see results/task3/image_size.txt — well under the 2GB limit (content size ~364MB).
+
+Under --cpus 1 --memory 1g, 50 sequential /parse requests all completed with HTTP 200
+(see results/task3/50_requests_status.txt). Peak memory observed was ~565MiB / 1GiB (55%),
+no out-of-memory kill (results/task3/peak_memory.txt).
 
 ## 4. Kubernetes Deployment, Scaling, and Reliability
 Deployment/Service/Ingress evidence, HPA scale-up/down evidence, rolling update and rollback evidence, Pod recovery evidence, cold-start median of three runs, load-balancing split between replicas, limitation of a single-node cluster.
