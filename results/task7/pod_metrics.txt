@@ -1,0 +1,3 @@
+NAME                     CPU(cores)   MEMORY(bytes)   
+parser-c5588b4cb-lrsxj   3m           656Mi           
+parser-c5588b4cb-vz662   3m           594Mi           
