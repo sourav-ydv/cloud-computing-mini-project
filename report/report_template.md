@@ -53,7 +53,53 @@ Under --cpus 1 --memory 1g, 50 sequential /parse requests all completed with HTT
 no out-of-memory kill (results/task3/peak_memory.txt).
 
 ## 4. Kubernetes Deployment, Scaling, and Reliability
-Deployment/Service/Ingress evidence, HPA scale-up/down evidence, rolling update and rollback evidence, Pod recovery evidence, cold-start median of three runs, load-balancing split between replicas, limitation of a single-node cluster.
+
+Namespace `app`, Deployment, Service and Ingress applied and verified: `/parse` answers
+correctly through the Ingress at the mapped port, with the correct `X-Model-Version` and
+`X-Served-By` headers (see Task 3 for header format).
+
+Resource requests/limits: cpu 250m/1, memory 512Mi/1Gi per pod. Readiness probe on
+`/readyz` gates traffic — confirmed the Service has no ready endpoints while the model
+is still downloading.
+
+HPA: min 1, max 2 replicas, target 70% CPU. Observed scaling from 1 to 2 replicas under
+Locust load, and back down to 1 when idle (see `kubectl get hpa` output during testing).
+
+**A real bug found and fixed during testing:** the first rolling-update test showed a
+99% failure rate under concurrent load, with repeated pod restarts. Investigation showed
+the `/parse` handler was `async def` but called `model.generate()` synchronously inside
+it — this blocked FastAPI's single event loop during each ~2-3 second generation, so
+concurrent requests (including the liveness/readiness probes themselves) queued up and
+timed out. Kubernetes then killed pods it believed were unresponsive, triggering a
+crash-restart loop that made things worse. Fix: moved the blocking generation call into
+a background thread via `asyncio.to_thread`, so health checks keep responding while
+`/parse` requests generate. After the fix, pod restarts during load testing dropped to
+zero across every subsequent test run.
+
+Rolling update: `MODEL_VERSION`/`MODEL_URI` changed from v1 to v2 while a 2-minute Locust
+load test ran (`--users 4 --spawn-rate 4`). Best observed run: 169 requests, 1 failure
+(0.59%), 0 pod restarts (`results/task4/real_test_v4_stats.csv`). A later run under
+colder conditions (immediately after a cold-start/pod-recovery test) showed a higher
+3.70% failure rate (`results/task4/loadbalance_test_stats.csv`) — all failures were clean
+HTTP 500s from the service's own output-validation path, not crashes or timeouts,
+suggesting the single-CPU-per-pod generation occasionally produces malformed JSON under
+concurrent load rather than an infrastructure fault. Rollback via
+`kubectl rollout undo` confirmed working: `X-Model-Version` header correctly reverted
+to `v1`.
+
+Pod recovery: deleting one pod under the Deployment showed Kubernetes automatically
+recreate it, restoring 2/2 Ready within seconds (`results/task4/pod_recovery.txt`).
+
+Cold start: three runs of deleting all pods and timing until Ready gave 6s, 5s, 5s
+(median 5s) (`results/task4/cold_start_times.txt`).
+
+Load balancing: with 2 Ready replicas, a 2-minute Locust run through the Ingress split
+successful requests 80/76 between the two pods (~51%/49%), both well above the required
+30% minimum (`results/task4/loadbalance_test_stats.csv`).
+
+**Limitation:** this cluster runs as a single node on one laptop. It does not demonstrate
+fault tolerance across multiple physical machines — a node failure would take down every
+pod regardless of replica count, since there is only one underlying host.
 
 ## 5. Subnetting and Network Access Control
 Subnet table, NACL design, nacl_sim.py score, explanation of statelessness and rule ordering.
