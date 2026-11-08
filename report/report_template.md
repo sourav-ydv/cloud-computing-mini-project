@@ -102,7 +102,27 @@ fault tolerance across multiple physical machines — a node failure would take 
 pod regardless of replica count, since there is only one underlying host.
 
 ## 5. Subnetting and Network Access Control
-Subnet table, NACL design, nacl_sim.py score, explanation of statelessness and rule ordering.
+
+Subnet allocation (see `network/subnets.md` for full working):
+
+| Subnet | Hosts needed | Prefix | Network | Broadcast | Usable range | Usable hosts |
+|---|---|---|---|---|---|---|
+| app | 1000 | /22 | 10.20.0.0 | 10.20.3.255 | 10.20.0.1–10.20.3.254 | 1022 |
+| public | 250 | /24 | 10.20.4.0 | 10.20.4.255 | 10.20.4.1–10.20.4.254 | 254 |
+| data | 100 | /25 | 10.20.5.0 | 10.20.5.127 | 10.20.5.1–10.20.5.126 | 126 |
+| management | 20 | /27 | 10.20.5.128 | 10.20.5.159 | 10.20.5.129–10.20.5.158 | 30 |
+
+NACL (`network/nacl.json`) checked against `network/packets_sample.jsonl` with
+`tools/nacl_sim.py`: 6/6 packets decided correctly (100%).
+
+A stateless NACL has no memory of connections, so inbound and outbound rules must be
+written separately for both directions of traffic — a reply to an outbound request is
+itself a new inbound packet as far as the device is concerned, and needs its own allow
+rule, or it is dropped. Rule order matters for the `198.51.100.0/24` block because NACL
+rules are evaluated lowest-number-first with first-match-wins: the deny rule for that
+range is given a lower rule number than the allow rules for ports 80/443, so a packet
+from that range is denied immediately regardless of which port it targets, before it can
+ever reach a later allow rule that would otherwise let it through.
 
 ## 6. Reproducibility, Testing, and CI/CD
 CI stages, link to a run that failed the quality gate, AI_USE.md summary, secret scan result.
