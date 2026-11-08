@@ -3,11 +3,17 @@ import os
 import socket
 import threading
 
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
+import asyncio
 import boto3
 import torch
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+torch.set_num_threads(1)
 
 MODEL_URI = os.environ["MODEL_URI"]
 MODEL_VERSION = os.environ["MODEL_VERSION"]
@@ -86,10 +92,50 @@ def readyz():
         return {"status": "ready"}
     return JSONResponse(status_code=503, content={"status": "loading"})
 
+def run_parse(text):
+    if FAULT_INJECT == "1":
+        raw = "not json"
+    else:
+        prompt = f"Command: {text}\nJSON: "
+        inputs = state["tokenizer"](prompt, return_tensors="pt")
+        input_len = inputs["input_ids"].shape[1]
+        with torch.no_grad():
+            out = state["model"].generate(
+                **inputs,
+                max_new_tokens=MAX_NEW_TOKENS,
+                do_sample=False,
+                pad_token_id=state["tokenizer"].eos_token_id,
+            )
+        new_tokens = out[0][input_len:]
+        raw = state["tokenizer"].decode(new_tokens, skip_special_tokens=True).strip()
+        while raw.lower().startswith("json:"):
+            raw = raw.split(":", 1)[1].strip()
+        if "{" in raw:
+            raw = raw[raw.index("{"):]
+
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        parsed = None
+
+    if parsed is None or not validate(parsed):
+        return JSONResponse(
+            status_code=500,
+            content={"error": "invalid_model_output"},
+            headers={"X-Model-Version": MODEL_VERSION, "X-Served-By": POD_NAME},
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content=parsed,
+        headers={"X-Model-Version": MODEL_VERSION, "X-Served-By": POD_NAME},
+    )
 
 @app.post("/parse")
 async def parse(request: Request):
     body = await request.json()
+    text = body["text"]
+    return await asyncio.to_thread(run_parse, text)
     text = body["text"]
 
     if FAULT_INJECT == "1":
