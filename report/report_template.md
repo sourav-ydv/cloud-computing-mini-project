@@ -220,3 +220,23 @@ margin at this concurrency level on this hardware.
 | Security and cost | Rs 2.56 per 1000 requests; gitleaks reports no secrets in repo | Credentials passed as dummy "any"/"any" for local SeaweedFS, not representative of real access control | Use real IAM-scoped credentials and TLS in a production deployment |
 
 ## Limitations and improvements
+
+- **Single-node cluster**: the entire deployment runs on one laptop as one node. This
+  does not demonstrate fault tolerance across multiple physical machines — a hardware
+  failure takes down every pod regardless of replica count.
+- **CPU-only inference**: both the teacher labelling (Ollama/phi3.5) and the student
+  training/serving ran on CPU (teacher was GPU-accelerated via Ollama automatically on
+  an RTX 3050; student training and the deployed service ran CPU-only per the
+  assignment's spec). This capped throughput and made concurrent request handling the
+  main scaling bottleneck (Task 7).
+- **Network reliability**: `kubectl port-forward` proved unreliable for the ~281MB model
+  transfer after a WiFi network change; SeaweedFS was switched to a NodePort Service for
+  a stable connection, documented in the Task 1/3 commits.
+- **A real concurrency bug was found and fixed during testing**: the inference service's
+  `/parse` handler initially blocked FastAPI's event loop during generation, causing
+  health-check failures and pod crash-loops under load. Fixed by moving generation into
+  a background thread (`asyncio.to_thread`). Full detail in Task 4.
+- **Improvement for future work**: logit-based distillation (matching the teacher's full
+  probability distribution rather than just its chosen text) would likely close more of
+  the gap between the teacher's 46% and the student's 40% full-frame accuracy, but needs
+  a teacher that exposes logits — Ollama's API does not.
