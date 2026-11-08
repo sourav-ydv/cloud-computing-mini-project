@@ -41,7 +41,7 @@ for rid in sorted(records.keys()):
     raw = rec["teacher_raw"]
     try:
         parsed = json.loads(raw)
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         reject_a += 1
         continue
     if not isinstance(parsed, dict) or set(parsed.keys()) != KEYS:
@@ -53,10 +53,9 @@ for rid in sorted(records.keys()):
     bad_slot = False
     for slot in ("date", "time", "place"):
         val = parsed[slot]
-        if val is not None:
-            if not isinstance(val, str) or val.lower() not in text.lower():
-                bad_slot = True
-                break
+        if val is not None and (not isinstance(val, str) or val.lower() not in text.lower()):
+            bad_slot = True
+            break
     if bad_slot:
         reject_d += 1
         continue

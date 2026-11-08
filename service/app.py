@@ -7,6 +7,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 import asyncio
+
 import boto3
 import torch
 from fastapi import FastAPI, Request
@@ -115,7 +116,7 @@ def run_parse(text):
 
     try:
         parsed = json.loads(raw)
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         parsed = None
 
     if parsed is None or not validate(parsed):
@@ -160,7 +161,7 @@ async def parse(request: Request):
 
     try:
         parsed = json.loads(raw)
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         parsed = None
 
     if parsed is None or not validate(parsed):

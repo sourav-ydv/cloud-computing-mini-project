@@ -81,7 +81,7 @@ for i, rec in enumerate(records):
             resp.raise_for_status()
             reply = resp.json()["response"].strip()
             break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print(f"retry {rec['id']}: {e}", file=sys.stderr)
             time.sleep(2)
     results.append({"id": rec["id"], "text": rec["text"], "teacher_raw": reply})
