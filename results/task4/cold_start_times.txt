@@ -1,0 +1,6 @@
+=== Run 1 ===
+Cold start took 6 seconds
+=== Run 2 ===
+Cold start took 5 seconds
+=== Run 3 ===
+Cold start took 5 seconds
