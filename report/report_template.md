@@ -154,9 +154,69 @@ from that range is denied immediately regardless of which port it targets, befor
 ever reach a later allow rule that would otherwise let it through.
 
 ## 6. Reproducibility, Testing, and CI/CD
-CI stages, link to a run that failed the quality gate, AI_USE.md summary, secret scan result.
+
+`make up` builds and deploys the whole system from a fresh clone; `make down` tears it down.
+
+GitHub Actions workflow (`.github/workflows/ci.yml`) runs, in order: lint (ruff) → secret
+scan (gitleaks) → unit tests (6 tests, `tests/`) → model evaluation (downloads the
+GitHub Release model, runs `score.py`) → quality gate (`score.py --min-validity 95`).
+
+Quality gate demonstrated failing with a deliberately bad model (untrained Pythia-70M):
+https://github.com/sourav-ydv/cloud-computing-mini-project/actions/runs/42514219577
+— `evaluate` succeeded (it runs regardless of model quality) but `gate` failed, since the
+untrained model's JSON validity was far below the 95% threshold.
+
+`AI_USE.md` documents AI tool usage. Gitleaks reports no secrets in the repository.
 
 ## 7. Performance, Cost, and Review
-Latency/throughput/error rate/resource/cold-start table, cost calculation worked out step by step, SLO and error budget, review table (evidence / limitation / improvement per row).
+
+Load test: `locust -f tools/locustfile.py --headless --users 4 --spawn-rate 4 --run-time 2m
+--host http://localhost:8081` (`results/task7/final_loadtest_stats.csv`).
+
+| Metric | Value |
+|---|---|
+| p50 latency | 5100 ms |
+| p95 latency | 7600 ms |
+| Throughput | ~0.9 req/s |
+| Error rate | 3.74% (4/107) |
+| Pod 1 CPU / memory | 1002m / 656Mi |
+| Pod 2 CPU / memory | 422m / 594Mi |
+| Cold-start (median of 3) | 5s |
+
+All four failures were clean HTTP 500s from the service's own output-validation path
+(see Task 4), not crashes, timeouts, or resource exhaustion — both pods stayed within
+their 1 CPU / 1Gi limits throughout.
+
+### Cost
+
+Each replica is billed for its CPU limit and memory limit every hour it runs:
+
+    hourly cost per replica = (1 vCPU x Rs 3.50/vCPU-hr) + (1 GiB x Rs 0.45/GiB-hr)
+                             = Rs 3.50 + Rs 0.45 = Rs 3.95/hour
+
+    hourly cost, 2 replicas = 2 x Rs 3.95 = Rs 7.90/hour
+
+    requests served per hour = (103 successful requests / 120 seconds) x 3600
+                              = 3090 requests/hour
+
+    cost per 1000 requests = (Rs 7.90 / 3090) x 1000 = Rs 2.56
+
+### SLO and error budget
+
+SLO: 95% of requests succeed. Window: one load-test run (107 requests).
+Error budget = 5% x 107 = 5.35, rounded to 5 requests.
+Observed failures: 4. Error budget used: 4/5 = 80%. Within budget, but with little
+margin at this concurrency level on this hardware.
+
+### Review
+
+| Component | Evidence (measured) | Limitation found | Improvement proposed |
+|---|---|---|---|
+| Data and storage | 2856/3000 records kept after cleaning (95.2% yield) | NodePort used instead of port-forward after repeated connection drops during large (281MB) transfers | Use a persistent volume-backed SeaweedFS with retry-aware clients for production |
+| Model quality | Student full-frame 40% vs teacher 46% (87% of teacher) | Student occasionally echoes its own prompt label (`"JSON:"`) before output | More training epochs or larger subset; explicit end-of-prompt token |
+| Latency and throughput | p50 5100ms, p95 7600ms, ~0.9 req/s | Single-CPU-per-pod generation is the throughput bottleneck, not I/O | Batch multiple requests per forward pass, or allow more CPU per pod |
+| Resource utilisation | Peak 1002m CPU / 656Mi memory per pod, within 1 CPU / 1Gi limits | One pod occasionally hit 100% of its CPU limit under load | Raise CPU limit or reduce MAX_NEW_TOKENS further |
+| Reliability and recovery | 0 pod restarts across all load tests after the blocking-generation fix; cold start median 5s | Readiness-gated rolling update dipped briefly below full capacity (Kubernetes default 25% maxUnavailable) | Set an explicit rolling update strategy with maxUnavailable: 0 |
+| Security and cost | Rs 2.56 per 1000 requests; gitleaks reports no secrets in repo | Credentials passed as dummy "any"/"any" for local SeaweedFS, not representative of real access control | Use real IAM-scoped credentials and TLS in a production deployment |
 
 ## Limitations and improvements
