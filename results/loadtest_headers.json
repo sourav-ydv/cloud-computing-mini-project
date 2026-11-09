@@ -1,9 +1,9 @@
 {
   "per_replica": {
-    "parser-c5588b4cb-vz662": 63,
-    "parser-c5588b4cb-lrsxj": 40
+    "parser-c5588b4cb-vz662": 67,
+    "parser-c5588b4cb-44pwb": 40
   },
   "per_model_version": {
-    "v1": 103
+    "v1": 107
   }
 }

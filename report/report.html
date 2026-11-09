@@ -1,4 +1,37 @@
-<html><body style="font-family: sans-serif; max-width: 800px; margin: 40px auto;"><h1>Cloud Computing Mini Project — Report</h1>
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body {
+    font-family: Arial, sans-serif;
+    max-width: 800px;
+    margin: 40px auto;
+    line-height: 1.45;
+    font-size: 12px;
+    color: #222;
+}
+h1, h2, h3 { page-break-after: avoid; }
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 10px;
+}
+th, td {
+    border: 1px solid #999;
+    padding: 6px;
+    text-align: left;
+}
+pre {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+code { overflow-wrap: break-word; }
+</style>
+</head>
+<body>
+<h1>Cloud Computing Mini Project — Report</h1>
 <p>Name: Sourav Yadav
 Roll number: 230101043
 GitHub repo: https://github.com/sourav-ydv/cloud-computing-mini-project</p>
@@ -234,66 +267,88 @@ https://github.com/sourav-ydv/cloud-computing-mini-project/actions/runs/42514219
 untrained model's JSON validity was far below the 95% threshold.</p>
 <p><code>AI_USE.md</code> documents AI tool usage. Gitleaks reports no secrets in the repository.</p>
 <h2>7. Performance, Cost, and Review</h2>
-<p>Load test: <code>locust -f tools/locustfile.py --headless --users 4 --spawn-rate 4 --run-time 2m
---host http://localhost:8081</code> (<code>results/task7/final_loadtest_stats.csv</code>).</p>
+<p>Load test: <code>locust -f tools/locustfile.py --headless --users 4 --spawn-rate 4 --run-time 2m --host http://localhost:8081</code> (<code>results/task7/final_loadtest_stats.csv</code>).</p>
+<p>The latest run generated 111 requests. There were 107 successful responses and 4 HTTP 500 failures. Both replicas received successful requests, and both remained available during the test.</p>
 <table>
 <thead>
 <tr>
 <th>Metric</th>
-<th>Value</th>
+<th style="text-align: right;">Value</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>p50 latency</td>
-<td>5100 ms</td>
+<td>Total requests</td>
+<td style="text-align: right;">111</td>
 </tr>
 <tr>
-<td>p95 latency</td>
-<td>7600 ms</td>
+<td>Successful requests</td>
+<td style="text-align: right;">107</td>
 </tr>
 <tr>
-<td>Throughput</td>
-<td>~0.9 req/s</td>
+<td>Failed requests</td>
+<td style="text-align: right;">4</td>
 </tr>
 <tr>
 <td>Error rate</td>
-<td>3.74% (4/107)</td>
+<td style="text-align: right;">3.60%</td>
 </tr>
 <tr>
-<td>Pod 1 CPU / memory</td>
-<td>1002m / 656Mi</td>
+<td>p50 latency</td>
+<td style="text-align: right;">5200 ms</td>
 </tr>
 <tr>
-<td>Pod 2 CPU / memory</td>
-<td>422m / 594Mi</td>
+<td>p95 latency</td>
+<td style="text-align: right;">7800 ms</td>
+</tr>
+<tr>
+<td>Throughput</td>
+<td style="text-align: right;">0.94 requests/s</td>
+</tr>
+<tr>
+<td>Replica 1 successful requests (<code>parser-c5588b4cb-vz662</code>)</td>
+<td style="text-align: right;">67 (62.6%)</td>
+</tr>
+<tr>
+<td>Replica 2 successful requests (<code>parser-c5588b4cb-44pwb</code>)</td>
+<td style="text-align: right;">40 (37.4%)</td>
+</tr>
+<tr>
+<td>Replica 1 peak sampled CPU / memory</td>
+<td style="text-align: right;">1000m / 593Mi</td>
+</tr>
+<tr>
+<td>Replica 2 peak sampled CPU / memory</td>
+<td style="text-align: right;">1007m / 687Mi</td>
 </tr>
 <tr>
 <td>Cold-start (median of 3)</td>
-<td>5s</td>
+<td style="text-align: right;">5s</td>
 </tr>
 </tbody>
 </table>
-<p>All four failures were clean HTTP 500s from the service's own output-validation path
-(see Task 4), not crashes, timeouts, or resource exhaustion — both pods stayed within
-their 1 CPU / 1Gi limits throughout.</p>
+<p>The per-pod measurements were sampled approximately every five seconds during the load test and are recorded in <code>results/task7/pod_metrics_during_load.txt</code>. The Locust statistics, failures and request history are retained in <code>results/task7/final_loadtest_*.csv</code>.</p>
+<p>Both replicas handled more than the required 30% of successful requests. However, the measured p95 latency of 7800 ms exceeded the 5000 ms performance target, and the 3.60% error rate exceeded the 1% error-rate target. The four failures were HTTP 500 responses from the service's output-validation path. The sampled memory usage remained below the 1Gi pod limit; CPU usage reached approximately one core on both replicas, indicating that CPU capacity was a significant constraint during this run.</p>
 <h3>Cost</h3>
-<p>Each replica is billed for its CPU limit and memory limit every hour it runs:</p>
+<p>The rate card is hypothetical and is used only for this assignment's cost-estimation exercise.</p>
+<p>Each replica is billed for its CPU and memory limits for every hour it runs:</p>
 <pre><code>hourly cost per replica = (1 vCPU x Rs 3.50/vCPU-hr) + (1 GiB x Rs 0.45/GiB-hr)
                          = Rs 3.50 + Rs 0.45 = Rs 3.95/hour
 
 hourly cost, 2 replicas = 2 x Rs 3.95 = Rs 7.90/hour
-
-requests served per hour = (103 successful requests / 120 seconds) x 3600
-                          = 3090 requests/hour
-
-cost per 1000 requests = (Rs 7.90 / 3090) x 1000 = Rs 2.56
 </code></pre>
+<p>Using 107 successful requests over the 120-second test window:</p>
+<pre><code>successful requests per hour = (107 / 120) x 3600
+                              = 3210 requests/hour
+
+cost per 1000 successful requests = (Rs 7.90 / 3210) x 1000
+                                  = approximately Rs 2.46
+</code></pre>
+<p>This is an extrapolated estimate based on the two-replica hourly rate and the observed successful-request throughput, not an actual cloud bill.</p>
 <h3>SLO and error budget</h3>
-<p>SLO: 95% of requests succeed. Window: one load-test run (107 requests).
-Error budget = 5% x 107 = 5.35, rounded to 5 requests.
-Observed failures: 4. Error budget used: 4/5 = 80%. Within budget, but with little
-margin at this concurrency level on this hardware.</p>
+<p>The project's stated SLO is 95% successful requests, equivalent to a maximum 5% error rate. For this run of 111 requests, the theoretical error budget was 5.55 failures (approximately 5 whole requests when expressed as an integer allowance).</p>
+<p>Observed failures: 4. This represents approximately 72.1% of the theoretical error budget, or 80% of the five-failure whole-request allowance. The run therefore remained within the stated 95% success SLO.</p>
+<p>The separate performance target of at most 1% errors was not met: the observed error rate was 3.60%. The p95 latency target of 5000 ms was also not met.</p>
 <h3>Review</h3>
 <table>
 <thead>
@@ -308,38 +363,38 @@ margin at this concurrency level on this hardware.</p>
 <tr>
 <td>Data and storage</td>
 <td>2856/3000 records kept after cleaning (95.2% yield)</td>
-<td>NodePort used instead of port-forward after repeated connection drops during large (281MB) transfers</td>
-<td>Use a persistent volume-backed SeaweedFS with retry-aware clients for production</td>
+<td>NodePort used instead of port-forward after repeated connection drops during large transfers</td>
+<td>Use persistent-volume-backed SeaweedFS with retry-aware clients</td>
 </tr>
 <tr>
 <td>Model quality</td>
 <td>Student full-frame 40% vs teacher 46% (87% of teacher)</td>
-<td>Student occasionally echoes its own prompt label (<code>"JSON:"</code>) before output</td>
-<td>More training epochs or larger subset; explicit end-of-prompt token</td>
+<td>Student occasionally echoes its own prompt label (<code>JSON:</code>) before output</td>
+<td>More training data or epochs; improve prompt/completion boundary formatting</td>
 </tr>
 <tr>
 <td>Latency and throughput</td>
-<td>p50 5100ms, p95 7600ms, ~0.9 req/s</td>
-<td>Single-CPU-per-pod generation is the throughput bottleneck, not I/O</td>
-<td>Batch multiple requests per forward pass, or allow more CPU per pod</td>
+<td>p50 5200ms, p95 7800ms, 0.94 requests/s</td>
+<td>p95 exceeded 5000ms; CPU approached one core per pod</td>
+<td>Increase CPU capacity, optimize generation, or batch requests</td>
 </tr>
 <tr>
 <td>Resource utilisation</td>
-<td>Peak 1002m CPU / 656Mi memory per pod, within 1 CPU / 1Gi limits</td>
-<td>One pod occasionally hit 100% of its CPU limit under load</td>
-<td>Raise CPU limit or reduce MAX_NEW_TOKENS further</td>
+<td>Sampled peak CPU 1000m and 1007m; memory 593Mi and 687Mi</td>
+<td>CPU approached the per-pod limit under concurrent load</td>
+<td>Profile inference and increase CPU allocation if available</td>
 </tr>
 <tr>
 <td>Reliability and recovery</td>
-<td>0 pod restarts across all load tests after the blocking-generation fix; cold start median 5s</td>
-<td>Readiness-gated rolling update dipped briefly below full capacity (Kubernetes default 25% maxUnavailable)</td>
-<td>Set an explicit rolling update strategy with maxUnavailable: 0</td>
+<td>Both replicas served traffic; 4 HTTP 500 responses in 111 requests</td>
+<td>Error rate 3.60% exceeded the 1% performance target</td>
+<td>Improve output validation and generation robustness under concurrency</td>
 </tr>
 <tr>
 <td>Security and cost</td>
-<td>Rs 2.56 per 1000 requests; gitleaks reports no secrets in repo</td>
-<td>Credentials passed as dummy "any"/"any" for local SeaweedFS, not representative of real access control</td>
-<td>Use real IAM-scoped credentials and TLS in a production deployment</td>
+<td>Approximately Rs 2.46 per 1000 successful requests using the hypothetical rate card; gitleaks reports no secrets in repo</td>
+<td>Local object-storage credentials are not representative of production access control</td>
+<td>Use scoped credentials and TLS in a production deployment</td>
 </tr>
 </tbody>
 </table>
@@ -364,4 +419,6 @@ margin at this concurrency level on this hardware.</p>
   probability distribution rather than just its chosen text) would likely close more of
   the gap between the teacher's 46% and the student's 40% full-frame accuracy, but needs
   a teacher that exposes logits — Ollama's API does not.</li>
-</ul></body></html>
+</ul>
+</body>
+</html>

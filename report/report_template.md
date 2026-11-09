@@ -170,54 +170,68 @@ untrained model's JSON validity was far below the 95% threshold.
 
 ## 7. Performance, Cost, and Review
 
-Load test: `locust -f tools/locustfile.py --headless --users 4 --spawn-rate 4 --run-time 2m
---host http://localhost:8081` (`results/task7/final_loadtest_stats.csv`).
+Load test: `locust -f tools/locustfile.py --headless --users 4 --spawn-rate 4 --run-time 2m --host http://localhost:8081` (`results/task7/final_loadtest_stats.csv`).
+
+The latest run generated 111 requests. There were 107 successful responses and 4 HTTP 500 failures. Both replicas received successful requests, and both remained available during the test.
 
 | Metric | Value |
-|---|---|
-| p50 latency | 5100 ms |
-| p95 latency | 7600 ms |
-| Throughput | ~0.9 req/s |
-| Error rate | 3.74% (4/107) |
-| Pod 1 CPU / memory | 1002m / 656Mi |
-| Pod 2 CPU / memory | 422m / 594Mi |
+|---|---:|
+| Total requests | 111 |
+| Successful requests | 107 |
+| Failed requests | 4 |
+| Error rate | 3.60% |
+| p50 latency | 5200 ms |
+| p95 latency | 7800 ms |
+| Throughput | 0.94 requests/s |
+| Replica 1 successful requests (`parser-c5588b4cb-vz662`) | 67 (62.6%) |
+| Replica 2 successful requests (`parser-c5588b4cb-44pwb`) | 40 (37.4%) |
+| Replica 1 peak sampled CPU / memory | 1000m / 593Mi |
+| Replica 2 peak sampled CPU / memory | 1007m / 687Mi |
 | Cold-start (median of 3) | 5s |
 
-All four failures were clean HTTP 500s from the service's own output-validation path
-(see Task 4), not crashes, timeouts, or resource exhaustion — both pods stayed within
-their 1 CPU / 1Gi limits throughout.
+The per-pod measurements were sampled approximately every five seconds during the load test and are recorded in `results/task7/pod_metrics_during_load.txt`. The Locust statistics, failures and request history are retained in `results/task7/final_loadtest_*.csv`.
+
+Both replicas handled more than the required 30% of successful requests. However, the measured p95 latency of 7800 ms exceeded the 5000 ms performance target, and the 3.60% error rate exceeded the 1% error-rate target. The four failures were HTTP 500 responses from the service's output-validation path. The sampled memory usage remained below the 1Gi pod limit; CPU usage reached approximately one core on both replicas, indicating that CPU capacity was a significant constraint during this run.
 
 ### Cost
 
-Each replica is billed for its CPU limit and memory limit every hour it runs:
+The rate card is hypothetical and is used only for this assignment's cost-estimation exercise.
+
+Each replica is billed for its CPU and memory limits for every hour it runs:
 
     hourly cost per replica = (1 vCPU x Rs 3.50/vCPU-hr) + (1 GiB x Rs 0.45/GiB-hr)
                              = Rs 3.50 + Rs 0.45 = Rs 3.95/hour
 
     hourly cost, 2 replicas = 2 x Rs 3.95 = Rs 7.90/hour
 
-    requests served per hour = (103 successful requests / 120 seconds) x 3600
-                              = 3090 requests/hour
+Using 107 successful requests over the 120-second test window:
 
-    cost per 1000 requests = (Rs 7.90 / 3090) x 1000 = Rs 2.56
+    successful requests per hour = (107 / 120) x 3600
+                                  = 3210 requests/hour
+
+    cost per 1000 successful requests = (Rs 7.90 / 3210) x 1000
+                                      = approximately Rs 2.46
+
+This is an extrapolated estimate based on the two-replica hourly rate and the observed successful-request throughput, not an actual cloud bill.
 
 ### SLO and error budget
 
-SLO: 95% of requests succeed. Window: one load-test run (107 requests).
-Error budget = 5% x 107 = 5.35, rounded to 5 requests.
-Observed failures: 4. Error budget used: 4/5 = 80%. Within budget, but with little
-margin at this concurrency level on this hardware.
+The project's stated SLO is 95% successful requests, equivalent to a maximum 5% error rate. For this run of 111 requests, the theoretical error budget was 5.55 failures (approximately 5 whole requests when expressed as an integer allowance).
+
+Observed failures: 4. This represents approximately 72.1% of the theoretical error budget, or 80% of the five-failure whole-request allowance. The run therefore remained within the stated 95% success SLO.
+
+The separate performance target of at most 1% errors was not met: the observed error rate was 3.60%. The p95 latency target of 5000 ms was also not met.
 
 ### Review
 
 | Component | Evidence (measured) | Limitation found | Improvement proposed |
 |---|---|---|---|
-| Data and storage | 2856/3000 records kept after cleaning (95.2% yield) | NodePort used instead of port-forward after repeated connection drops during large (281MB) transfers | Use a persistent volume-backed SeaweedFS with retry-aware clients for production |
-| Model quality | Student full-frame 40% vs teacher 46% (87% of teacher) | Student occasionally echoes its own prompt label (`"JSON:"`) before output | More training epochs or larger subset; explicit end-of-prompt token |
-| Latency and throughput | p50 5100ms, p95 7600ms, ~0.9 req/s | Single-CPU-per-pod generation is the throughput bottleneck, not I/O | Batch multiple requests per forward pass, or allow more CPU per pod |
-| Resource utilisation | Peak 1002m CPU / 656Mi memory per pod, within 1 CPU / 1Gi limits | One pod occasionally hit 100% of its CPU limit under load | Raise CPU limit or reduce MAX_NEW_TOKENS further |
-| Reliability and recovery | 0 pod restarts across all load tests after the blocking-generation fix; cold start median 5s | Readiness-gated rolling update dipped briefly below full capacity (Kubernetes default 25% maxUnavailable) | Set an explicit rolling update strategy with maxUnavailable: 0 |
-| Security and cost | Rs 2.56 per 1000 requests; gitleaks reports no secrets in repo | Credentials passed as dummy "any"/"any" for local SeaweedFS, not representative of real access control | Use real IAM-scoped credentials and TLS in a production deployment |
+| Data and storage | 2856/3000 records kept after cleaning (95.2% yield) | NodePort used instead of port-forward after repeated connection drops during large transfers | Use persistent-volume-backed SeaweedFS with retry-aware clients |
+| Model quality | Student full-frame 40% vs teacher 46% (87% of teacher) | Student occasionally echoes its own prompt label (`JSON:`) before output | More training data or epochs; improve prompt/completion boundary formatting |
+| Latency and throughput | p50 5200ms, p95 7800ms, 0.94 requests/s | p95 exceeded 5000ms; CPU approached one core per pod | Increase CPU capacity, optimize generation, or batch requests |
+| Resource utilisation | Sampled peak CPU 1000m and 1007m; memory 593Mi and 687Mi | CPU approached the per-pod limit under concurrent load | Profile inference and increase CPU allocation if available |
+| Reliability and recovery | Both replicas served traffic; 4 HTTP 500 responses in 111 requests | Error rate 3.60% exceeded the 1% performance target | Improve output validation and generation robustness under concurrency |
+| Security and cost | Approximately Rs 2.46 per 1000 successful requests using the hypothetical rate card; gitleaks reports no secrets in repo | Local object-storage credentials are not representative of production access control | Use scoped credentials and TLS in a production deployment |
 
 ## Limitations and improvements
 
