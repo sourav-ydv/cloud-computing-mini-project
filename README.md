@@ -1,6 +1,6 @@
 # Cloud Computing Mini Project — Command Parser
 
-GitHub repo: <put your repo link here>
+GitHub repo: https://github.com/sourav-ydv/cloud-computing-mini-project
 
 ## Build and deploy
 
