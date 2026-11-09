@@ -1,0 +1,367 @@
+<html><body style="font-family: sans-serif; max-width: 800px; margin: 40px auto;"><h1>Cloud Computing Mini Project — Report</h1>
+<p>Name: Sourav Yadav
+Roll number: 230101043
+GitHub repo: https://github.com/sourav-ydv/cloud-computing-mini-project</p>
+<h2>1. Object Storage and Parallel Teacher Labelling</h2>
+<p>Cluster created from <code>cluster/k3d.yaml</code>, SeaweedFS deployed in namespace <code>data</code>, with
+<code>datasets</code> and <code>models</code> buckets. <code>commands_pool.jsonl</code> uploaded to <code>datasets</code>. Teacher
+prompt in <code>prompts/teacher_prompt.txt</code>.</p>
+<p>Sharding: <code>worker/labeler.py</code> reads <code>SHARD_INDEX</code> and <code>SHARD_COUNT</code> from the environment
+and takes every command whose line number (0-indexed) satisfies
+<code>line_number % SHARD_COUNT == SHARD_INDEX</code>, so two workers with <code>SHARD_COUNT=2</code> and
+<code>SHARD_INDEX=0</code>/<code>1</code> between them cover every command exactly once with no gaps or
+repeats (verified: 3000 unique ids across both shard outputs, 0 duplicates). Each worker
+writes its own object (<code>datasets/teacher/shard-0.jsonl</code>, <code>shard-1.jsonl</code>) and checkpoints
+every 25 records so progress survives an interruption. Both workers were run with
+different <code>SHARD_INDEX</code> values at the same time to demonstrate parallelism, then run to
+completion afterward (CPU-bound local inference made true full-length parallel execution
+impractical on available hardware — see Limitations).</p>
+<p>Counts from <code>worker/clean.py</code> on the combined shard outputs:</p>
+<table>
+<thead>
+<tr>
+<th>Reason</th>
+<th>Count</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Input records</td>
+<td>3000</td>
+</tr>
+<tr>
+<td>Rejected: not valid JSON (a)</td>
+<td>5</td>
+</tr>
+<tr>
+<td>Rejected: wrong keys (b)</td>
+<td>15</td>
+</tr>
+<tr>
+<td>Rejected: bad intent (c)</td>
+<td>11</td>
+</tr>
+<tr>
+<td>Rejected: bad slot value (d)</td>
+<td>65</td>
+</tr>
+<tr>
+<td>Duplicates</td>
+<td>48</td>
+</tr>
+<tr>
+<td>Kept</td>
+<td>2856</td>
+</tr>
+</tbody>
+</table>
+<p>Check: 5 + 15 + 11 + 65 + 48 + 2856 = 3000. Output written to <code>datasets/v1/train.jsonl</code>
+with checksum in <code>datasets/v1/train.sha256</code>.</p>
+<h2>2. Training the Student</h2>
+<p>config.yaml summary: seed 42, learning rate 5.0e-5, batch size 8, 3 epochs, max sequence length 128, EleutherAI/pythia-70m, trained with PyTorch 2.3.1+cpu and Transformers 4.42.4.</p>
+<p>Loss curve (v1, seed 42, 1500 examples): epoch 1 — 1.0132, epoch 2 — 0.6729, epoch 3 — 0.5260. A second version (v2, seed 123) was trained the same way: epoch 1 — 1.0315, epoch 2 — 0.6875, epoch 3 — 0.5471.</p>
+<p>Model artefact locations: <code>models/v1/</code>, <code>models/v2/</code>, uploaded to the <code>models</code> bucket under <code>v1/</code> and <code>v2/</code>, each with a SHA-256 checksum written to <code>model.sha256</code> alongside the weights.</p>
+<h3>Sequence-level vs logit-based distillation</h3>
+<p>Sequence-level distillation trains the student on the teacher's final output text, treated as if it were a ground-truth label. For this project, the teacher (phi3.5, run through Ollama with temperature 0 and seed 42) generated a JSON object for each of the 3,000 commands in the pool. After cleaning, 2,856 of these teacher outputs became training examples: the student (Pythia-70M) was fine-tuned to predict the exact JSON string the teacher produced, given the command as input. The student never sees the teacher's internal computation — only its output text.</p>
+<p>Logit-based distillation instead trains the student to match the teacher's full probability distribution over the vocabulary at each generation step (the "soft targets"), not just the single token the teacher happened to pick. This usually transfers more information per example, since the distribution encodes the teacher's relative confidence across all plausible next tokens, not only its top choice.</p>
+<p>Logit-based distillation was not possible in this project because Ollama's <code>/api/generate</code> endpoint only returns the generated text, not the per-token logits or probability distribution the teacher model computed internally. Without access to those distributions, there is nothing to match the student's distribution against beyond the teacher's chosen output tokens, which is exactly what sequence-level distillation uses.</p>
+<h3>Results</h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>JSON validity</th>
+<th>Intent accuracy</th>
+<th>Date</th>
+<th>Time</th>
+<th>Place</th>
+<th>Full-frame</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Teacher (phi3.5, 3.8B)</td>
+<td>99%</td>
+<td>82%</td>
+<td>84%</td>
+<td>82%</td>
+<td>79%</td>
+<td>46%</td>
+</tr>
+<tr>
+<td>Untrained Pythia-70M</td>
+<td>0%</td>
+<td>0%</td>
+<td>0%</td>
+<td>0%</td>
+<td>0%</td>
+<td>0%</td>
+</tr>
+<tr>
+<td>Trained student (Pythia-70M)</td>
+<td>99%</td>
+<td>81%</td>
+<td>71%</td>
+<td>82%</td>
+<td>79%</td>
+<td>40%</td>
+</tr>
+</tbody>
+</table>
+<p>The untrained model produced no valid JSON at all on the validation set — it has no notion of the task's output format. After fine-tuning on 1,500 teacher-labelled examples, the student reaches 40% full-frame accuracy, 87% of the teacher's 46%, despite being roughly 54x smaller in parameter count (70M vs 3.8B). JSON validity and intent accuracy are nearly identical between teacher and student; the main gap is in slot accuracy, particularly <code>date</code>, where the student is less consistent than the teacher.</p>
+<h3>Limitation</h3>
+<p>A specific limitation observed during generation: in a noticeable fraction of early-epoch outputs (and occasionally even in the final model), the student echoed its own prompt label — producing <code>"JSON: {...}"</code> or repeating <code>"JSON:"</code> a second time before the actual object — rather than going straight to the JSON object the teacher always produced. This is a training-data formatting artifact: with only 1,500 examples and 3 epochs on a 70M-parameter model, the student partially learned the surface pattern of the prompt template itself rather than cleanly separating "prompt" from "completion." The teacher never exhibits this behaviour. In practice this was handled by stripping a leading repeated <code>"JSON:"</code> label during post-processing before JSON parsing, which is why the reported <code>json_validity</code> (99%) is high despite this artifact — but it is a real limitation of the fine-tuned model's output discipline, not something hidden by the scoring method.</p>
+<h2>3. The Inference Service in a Container</h2>
+<p>All three endpoints behave as specified: /healthz returns 200 once the process is alive;
+/readyz returns 503 until the model finishes downloading from object storage, then 200;
+/parse returns the four-key JSON with X-Model-Version and X-Served-By headers set correctly.</p>
+<p>FAULT_INJECT=1 test: /parse returned HTTP 500 with body exactly {"error": "invalid_model_output"},
+as required.</p>
+<p>Image size: see results/task3/image_size.txt — well under the 2GB limit (content size ~364MB).</p>
+<p>Under --cpus 1 --memory 1g, 50 sequential /parse requests all completed with HTTP 200
+(see results/task3/50_requests_status.txt). Peak memory observed was ~565MiB / 1GiB (55%),
+no out-of-memory kill (results/task3/peak_memory.txt).</p>
+<h2>4. Kubernetes Deployment, Scaling, and Reliability</h2>
+<p>Namespace <code>app</code>, Deployment, Service and Ingress applied and verified: <code>/parse</code> answers
+correctly through the Ingress at the mapped port, with the correct <code>X-Model-Version</code> and
+<code>X-Served-By</code> headers (see Task 3 for header format).</p>
+<p>Resource requests/limits: cpu 250m/1, memory 512Mi/1Gi per pod. Readiness probe on
+<code>/readyz</code> gates traffic — confirmed the Service has no ready endpoints while the model
+is still downloading.</p>
+<p>HPA: min 1, max 2 replicas, target 70% CPU. Observed scaling from 1 to 2 replicas under
+Locust load, and back down to 1 when idle (see <code>kubectl get hpa</code> output during testing).</p>
+<p><strong>A real bug found and fixed during testing:</strong> the first rolling-update test showed a
+99% failure rate under concurrent load, with repeated pod restarts. Investigation showed
+the <code>/parse</code> handler was <code>async def</code> but called <code>model.generate()</code> synchronously inside
+it — this blocked FastAPI's single event loop during each ~2-3 second generation, so
+concurrent requests (including the liveness/readiness probes themselves) queued up and
+timed out. Kubernetes then killed pods it believed were unresponsive, triggering a
+crash-restart loop that made things worse. Fix: moved the blocking generation call into
+a background thread via <code>asyncio.to_thread</code>, so health checks keep responding while
+<code>/parse</code> requests generate. After the fix, pod restarts during load testing dropped to
+zero across every subsequent test run.</p>
+<p>Rolling update: <code>MODEL_VERSION</code>/<code>MODEL_URI</code> changed from v1 to v2 while a 2-minute Locust
+load test ran (<code>--users 4 --spawn-rate 4</code>). Best observed run: 169 requests, 1 failure
+(0.59%), 0 pod restarts (<code>results/task4/real_test_v4_stats.csv</code>). A later run under
+colder conditions (immediately after a cold-start/pod-recovery test) showed a higher
+3.70% failure rate (<code>results/task4/loadbalance_test_stats.csv</code>) — all failures were clean
+HTTP 500s from the service's own output-validation path, not crashes or timeouts,
+suggesting the single-CPU-per-pod generation occasionally produces malformed JSON under
+concurrent load rather than an infrastructure fault. Rollback via
+<code>kubectl rollout undo</code> confirmed working: <code>X-Model-Version</code> header correctly reverted
+to <code>v1</code>.</p>
+<p>Pod recovery: deleting one pod under the Deployment showed Kubernetes automatically
+recreate it, restoring 2/2 Ready within seconds (<code>results/task4/pod_recovery.txt</code>).</p>
+<p>Cold start: three runs of deleting all pods and timing until Ready gave 6s, 5s, 5s
+(median 5s) (<code>results/task4/cold_start_times.txt</code>).</p>
+<p>Load balancing: with 2 Ready replicas, a 2-minute Locust run through the Ingress split
+successful requests 80/76 between the two pods (~51%/49%), both well above the required
+30% minimum (<code>results/task4/loadbalance_test_stats.csv</code>).</p>
+<p><strong>Limitation:</strong> this cluster runs as a single node on one laptop. It does not demonstrate
+fault tolerance across multiple physical machines — a node failure would take down every
+pod regardless of replica count, since there is only one underlying host.</p>
+<h2>5. Subnetting and Network Access Control</h2>
+<p>Subnet allocation (see <code>network/subnets.md</code> for full working):</p>
+<table>
+<thead>
+<tr>
+<th>Subnet</th>
+<th>Hosts needed</th>
+<th>Prefix</th>
+<th>Network</th>
+<th>Broadcast</th>
+<th>Usable range</th>
+<th>Usable hosts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>app</td>
+<td>1000</td>
+<td>/22</td>
+<td>10.20.0.0</td>
+<td>10.20.3.255</td>
+<td>10.20.0.1–10.20.3.254</td>
+<td>1022</td>
+</tr>
+<tr>
+<td>public</td>
+<td>250</td>
+<td>/24</td>
+<td>10.20.4.0</td>
+<td>10.20.4.255</td>
+<td>10.20.4.1–10.20.4.254</td>
+<td>254</td>
+</tr>
+<tr>
+<td>data</td>
+<td>100</td>
+<td>/25</td>
+<td>10.20.5.0</td>
+<td>10.20.5.127</td>
+<td>10.20.5.1–10.20.5.126</td>
+<td>126</td>
+</tr>
+<tr>
+<td>management</td>
+<td>20</td>
+<td>/27</td>
+<td>10.20.5.128</td>
+<td>10.20.5.159</td>
+<td>10.20.5.129–10.20.5.158</td>
+<td>30</td>
+</tr>
+</tbody>
+</table>
+<p>NACL (<code>network/nacl.json</code>) checked against <code>network/packets_sample.jsonl</code> with
+<code>tools/nacl_sim.py</code>: 6/6 packets decided correctly (100%).</p>
+<p>A stateless NACL has no memory of connections, so inbound and outbound rules must be
+written separately for both directions of traffic — a reply to an outbound request is
+itself a new inbound packet as far as the device is concerned, and needs its own allow
+rule, or it is dropped. Rule order matters for the <code>198.51.100.0/24</code> block because NACL
+rules are evaluated lowest-number-first with first-match-wins: the deny rule for that
+range is given a lower rule number than the allow rules for ports 80/443, so a packet
+from that range is denied immediately regardless of which port it targets, before it can
+ever reach a later allow rule that would otherwise let it through.</p>
+<h2>6. Reproducibility, Testing, and CI/CD</h2>
+<p><code>make up</code> builds and deploys the whole system from a fresh clone; <code>make down</code> tears it down.</p>
+<p>GitHub Actions workflow (<code>.github/workflows/ci.yml</code>) runs, in order: lint (ruff) → secret
+scan (gitleaks) → unit tests (6 tests, <code>tests/</code>) → model evaluation (downloads the
+GitHub Release model, runs <code>score.py</code>) → quality gate (<code>score.py --min-validity 95</code>).</p>
+<p>Quality gate demonstrated failing with a deliberately bad model (untrained Pythia-70M):
+https://github.com/sourav-ydv/cloud-computing-mini-project/actions/runs/42514219577
+— <code>evaluate</code> succeeded (it runs regardless of model quality) but <code>gate</code> failed, since the
+untrained model's JSON validity was far below the 95% threshold.</p>
+<p><code>AI_USE.md</code> documents AI tool usage. Gitleaks reports no secrets in the repository.</p>
+<h2>7. Performance, Cost, and Review</h2>
+<p>Load test: <code>locust -f tools/locustfile.py --headless --users 4 --spawn-rate 4 --run-time 2m
+--host http://localhost:8081</code> (<code>results/task7/final_loadtest_stats.csv</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>p50 latency</td>
+<td>5100 ms</td>
+</tr>
+<tr>
+<td>p95 latency</td>
+<td>7600 ms</td>
+</tr>
+<tr>
+<td>Throughput</td>
+<td>~0.9 req/s</td>
+</tr>
+<tr>
+<td>Error rate</td>
+<td>3.74% (4/107)</td>
+</tr>
+<tr>
+<td>Pod 1 CPU / memory</td>
+<td>1002m / 656Mi</td>
+</tr>
+<tr>
+<td>Pod 2 CPU / memory</td>
+<td>422m / 594Mi</td>
+</tr>
+<tr>
+<td>Cold-start (median of 3)</td>
+<td>5s</td>
+</tr>
+</tbody>
+</table>
+<p>All four failures were clean HTTP 500s from the service's own output-validation path
+(see Task 4), not crashes, timeouts, or resource exhaustion — both pods stayed within
+their 1 CPU / 1Gi limits throughout.</p>
+<h3>Cost</h3>
+<p>Each replica is billed for its CPU limit and memory limit every hour it runs:</p>
+<pre><code>hourly cost per replica = (1 vCPU x Rs 3.50/vCPU-hr) + (1 GiB x Rs 0.45/GiB-hr)
+                         = Rs 3.50 + Rs 0.45 = Rs 3.95/hour
+
+hourly cost, 2 replicas = 2 x Rs 3.95 = Rs 7.90/hour
+
+requests served per hour = (103 successful requests / 120 seconds) x 3600
+                          = 3090 requests/hour
+
+cost per 1000 requests = (Rs 7.90 / 3090) x 1000 = Rs 2.56
+</code></pre>
+<h3>SLO and error budget</h3>
+<p>SLO: 95% of requests succeed. Window: one load-test run (107 requests).
+Error budget = 5% x 107 = 5.35, rounded to 5 requests.
+Observed failures: 4. Error budget used: 4/5 = 80%. Within budget, but with little
+margin at this concurrency level on this hardware.</p>
+<h3>Review</h3>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Evidence (measured)</th>
+<th>Limitation found</th>
+<th>Improvement proposed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Data and storage</td>
+<td>2856/3000 records kept after cleaning (95.2% yield)</td>
+<td>NodePort used instead of port-forward after repeated connection drops during large (281MB) transfers</td>
+<td>Use a persistent volume-backed SeaweedFS with retry-aware clients for production</td>
+</tr>
+<tr>
+<td>Model quality</td>
+<td>Student full-frame 40% vs teacher 46% (87% of teacher)</td>
+<td>Student occasionally echoes its own prompt label (<code>"JSON:"</code>) before output</td>
+<td>More training epochs or larger subset; explicit end-of-prompt token</td>
+</tr>
+<tr>
+<td>Latency and throughput</td>
+<td>p50 5100ms, p95 7600ms, ~0.9 req/s</td>
+<td>Single-CPU-per-pod generation is the throughput bottleneck, not I/O</td>
+<td>Batch multiple requests per forward pass, or allow more CPU per pod</td>
+</tr>
+<tr>
+<td>Resource utilisation</td>
+<td>Peak 1002m CPU / 656Mi memory per pod, within 1 CPU / 1Gi limits</td>
+<td>One pod occasionally hit 100% of its CPU limit under load</td>
+<td>Raise CPU limit or reduce MAX_NEW_TOKENS further</td>
+</tr>
+<tr>
+<td>Reliability and recovery</td>
+<td>0 pod restarts across all load tests after the blocking-generation fix; cold start median 5s</td>
+<td>Readiness-gated rolling update dipped briefly below full capacity (Kubernetes default 25% maxUnavailable)</td>
+<td>Set an explicit rolling update strategy with maxUnavailable: 0</td>
+</tr>
+<tr>
+<td>Security and cost</td>
+<td>Rs 2.56 per 1000 requests; gitleaks reports no secrets in repo</td>
+<td>Credentials passed as dummy "any"/"any" for local SeaweedFS, not representative of real access control</td>
+<td>Use real IAM-scoped credentials and TLS in a production deployment</td>
+</tr>
+</tbody>
+</table>
+<h2>Limitations and improvements</h2>
+<ul>
+<li><strong>Single-node cluster</strong>: the entire deployment runs on one laptop as one node. This
+  does not demonstrate fault tolerance across multiple physical machines — a hardware
+  failure takes down every pod regardless of replica count.</li>
+<li><strong>CPU-only inference</strong>: both the teacher labelling (Ollama/phi3.5) and the student
+  training/serving ran on CPU (teacher was GPU-accelerated via Ollama automatically on
+  an RTX 3050; student training and the deployed service ran CPU-only per the
+  assignment's spec). This capped throughput and made concurrent request handling the
+  main scaling bottleneck (Task 7).</li>
+<li><strong>Network reliability</strong>: <code>kubectl port-forward</code> proved unreliable for the ~281MB model
+  transfer after a WiFi network change; SeaweedFS was switched to a NodePort Service for
+  a stable connection, documented in the Task 1/3 commits.</li>
+<li><strong>A real concurrency bug was found and fixed during testing</strong>: the inference service's
+  <code>/parse</code> handler initially blocked FastAPI's event loop during generation, causing
+  health-check failures and pod crash-loops under load. Fixed by moving generation into
+  a background thread (<code>asyncio.to_thread</code>). Full detail in Task 4.</li>
+<li><strong>Improvement for future work</strong>: logit-based distillation (matching the teacher's full
+  probability distribution rather than just its chosen text) would likely close more of
+  the gap between the teacher's 46% and the student's 40% full-frame accuracy, but needs
+  a teacher that exposes logits — Ollama's API does not.</li>
+</ul></body></html>
